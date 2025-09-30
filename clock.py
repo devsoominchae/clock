@@ -1,16 +1,16 @@
 import os
 import json
 import time
-from lxml import html
-import tkinter as tk
-import pandas as pd
-from tkinter import ttk, colorchooser
-from datetime import datetime
+import random
 import requests
 import threading
 
-import certifi
+from lxml import html
+from tkinter import ttk, colorchooser
+from datetime import datetime, timedelta
 
+import pandas as pd
+import tkinter as tk
 
 MINUTE = 60 * 1000
 SECOND = 1000
@@ -23,14 +23,11 @@ def get_conf():
         with open(os.path.join("var", "conf.json"), 'r', encoding='utf-8') as f:
             conf = json.load(f)
     else:
+        print("Conf does not exist.")
         exit(1)
+    print("Loaded conf")
 
 get_conf()
-
-
-from datetime import datetime, timedelta
-import pandas as pd
-import os
 
 def download_schedule_text():
     try:
@@ -56,7 +53,7 @@ def download_schedule_text():
 
         remaining_text = ""
         for _, row in remaining_schedule.iterrows():
-            remaining_text += f"{row['time']} - {row[current_weekday]}\n"
+            remaining_text += f"{row['time'][:row['time'].index(':')]}시 {row[current_weekday]}\n"
 
         # Get tomorrow's weekday name
         tomorrow = now + timedelta(days=1)
@@ -69,7 +66,7 @@ def download_schedule_text():
 
         tomorrow_text = ""
         for _, row in tomorrow_schedule.iterrows():
-            tomorrow_text += f"{row['time']} - {row[tomorrow_weekday]}\n"
+            tomorrow_text += f"{row['time'][:row['time'].index(':')]}시 {row[tomorrow_weekday]}\n"
 
         # Combine all text
         full_text = f"{current_schedule}\n\nToday:\n{remaining_text.strip()}\n\n{tomorrow_weekday}:\n{tomorrow_text.strip()}"
@@ -154,6 +151,12 @@ class DigitalClock(tk.Tk):
         self.fullscreen = False
         self.menu_visible = True
 
+        self.bible_label = tk.Label(
+            self, font=(self.font_name, 18, "bold"),
+            fg="#ffffff", bg="#111", wraplength=580, justify="center"
+        )
+        self.bible_label.place(relx=0.5, y=30, anchor="n")  
+
         self.weather_label = tk.Label(self, font=(self.font_name, 16, "bold"),
                                       fg="#ffffff", bg="#111", anchor="w", justify="left")
         self.weather_label.place(x=10, y=10)
@@ -232,9 +235,11 @@ class DigitalClock(tk.Tk):
         self.bind("<Control-x>", self.increase_font)
         self.bind("<Control-w>", self.update_weather)
         self.bind("<Control-c>", self.update_schedule)
+        self.bind("<Control-b>", self.update_bible)
         self.bind("<Escape>", lambda e: self.exit_fullscreen())  # ESC로 전체화면 해제
 
         self.update_clock()
+        self.update_bible()
         self.update_weather()
         self.update_schedule()
         self.toggle_fullscreen()
@@ -266,6 +271,22 @@ class DigitalClock(tk.Tk):
         self.weather_label.config(text=get_weather_text())
         
         self.after(UPDATE_INTERVAL, self.update_weather)
+    
+    def update_bible(self, event=None):
+        try:
+            with open(os.path.join("var", "bible.txt"), "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+            if lines:
+                verse = random.choice(lines)
+
+                self.bible_label.config(text=verse)
+            else:
+                self.bible_label.config(text="(구절 없음)")
+        except Exception as e:
+            self.bible_label.config(text="Bible load error")
+
+        print("Loaded bible verse")
+        self.after(60 * MINUTE, self.update_bible)
 
 
 
