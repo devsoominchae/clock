@@ -28,6 +28,10 @@ def get_conf():
 get_conf()
 
 
+from datetime import datetime, timedelta
+import pandas as pd
+import os
+
 def download_schedule_text():
     try:
         url = conf.get("google_sheet_url", "")
@@ -36,11 +40,16 @@ def download_schedule_text():
         current_hour = now.hour
         current_weekday = now.strftime("%A")
 
-        current_schedule = df.loc[df['time'] == f"{current_hour}:00", current_weekday].values[0]
-        if pd.isna(current_schedule):
+        # Get current schedule
+        try:
+            current_schedule = df.loc[df['time'] == f"{current_hour}:00", current_weekday].values[0]
+            if pd.isna(current_schedule):
+                current_schedule = "No schedule"
+        except:
             current_schedule = "No schedule"
 
-        today_df = df[[ 'time', current_weekday ]].copy()
+        # Remaining schedule for today
+        today_df = df[['time', current_weekday]].copy()
         remaining_schedule = today_df[today_df['time'].apply(lambda t: int(t.split(':')[0])) > current_hour]
         remaining_schedule = remaining_schedule[remaining_schedule[current_weekday].notna()]
         remaining_schedule = remaining_schedule[remaining_schedule[current_weekday].str.lower() != "sleep"]
@@ -49,16 +58,31 @@ def download_schedule_text():
         for _, row in remaining_schedule.iterrows():
             remaining_text += f"{row['time']} - {row[current_weekday]}\n"
 
-        full_text = f"{current_schedule}\n\n{remaining_text.strip()}"
-        
+        # Get tomorrow's weekday name
+        tomorrow = now + timedelta(days=1)
+        tomorrow_weekday = tomorrow.strftime("%A")
+
+        # Schedule for tomorrow
+        tomorrow_df = df[['time', tomorrow_weekday]].copy()
+        tomorrow_schedule = tomorrow_df[tomorrow_df[tomorrow_weekday].notna()]
+        tomorrow_schedule = tomorrow_schedule[tomorrow_schedule[tomorrow_weekday].str.lower() != "sleep"]
+
+        tomorrow_text = ""
+        for _, row in tomorrow_schedule.iterrows():
+            tomorrow_text += f"{row['time']} - {row[tomorrow_weekday]}\n"
+
+        # Combine all text
+        full_text = f"{current_schedule}\n\nToday:\n{remaining_text.strip()}\n\n{tomorrow_weekday}:\n{tomorrow_text.strip()}"
+
         with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
             file.write(full_text)
     except Exception as e:
         print(e)
         with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
             file.write("Schedule download error")
-            
+
     print("Download schedule complete")
+
     
 def download_schedule_thread():
     while True:
@@ -73,12 +97,22 @@ def download_weather():
             response = requests.get(url)
             response.encoding = 'utf-8'
             tree = html.fromstring(response.text)
+            i = 1
+            try:
+                while True:
+                    if tree.xpath(f"/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/th/a")[0].text == "서울":
+                        break
+                    i += 1
+            except Exception as e:
+                print(e)
+                pass
+            
+            area_text = tree.xpath(f"/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/th/a")[0].text
+            sky_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[1]')[0].text
+            temp_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[5]')[0].text
+            rain_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[8]')[0].text.replace('\xa0', '')
 
-            sky_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[1]')[0].text
-            temp_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[5]')[0].text
-            rain_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[8]')[0].text.replace('\xa0', '')
-
-            full_text = f"🌡 {temp_text}°C \n☁ {sky_text} \n☔ {rain_text}"
+            full_text = f"{area_text}\n🌡 {temp_text}°C \n☁ {sky_text} \n☔ {rain_text}"
             with open(os.path.join("var", "weather.txt"), "w", encoding="utf-8") as file:
                 file.write(full_text)
             
