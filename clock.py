@@ -1,27 +1,34 @@
 import os
 import json
+import time
+from lxml import html
 import tkinter as tk
 import pandas as pd
 from tkinter import ttk, colorchooser
 from datetime import datetime
 import requests
+import threading
+
+import certifi
+
 
 MINUTE = 60 * 1000
 SECOND = 1000
 
-UPDATE_INTERVAL = 5 * MINUTE
+UPDATE_INTERVAL = 20 * SECOND
 
 def get_conf():
     global conf
-    if os.path.exists('conf.json'):
-        with open('conf.json', 'r', encoding='utf-8') as f:
+    if os.path.exists(os.path.join("var", "conf.json")):
+        with open(os.path.join("var", "conf.json"), 'r', encoding='utf-8') as f:
             conf = json.load(f)
     else:
         exit(1)
 
 get_conf()
 
-def get_schedule_text():
+
+def download_schedule_text():
     try:
         url = conf.get("google_sheet_url", "")
         df = pd.read_csv(url, encoding='utf-8')
@@ -43,9 +50,60 @@ def get_schedule_text():
             remaining_text += f"{row['time']} - {row[current_weekday]}\n"
 
         full_text = f"{current_schedule}\n\n{remaining_text.strip()}"
-        return full_text
+        
+        with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
+            file.write(full_text)
     except Exception as e:
-        return "Schedule: N/A"
+        print(e)
+        with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
+            file.write("Schedule download error")
+            
+    print("Download schedule complete")
+    
+def download_schedule_thread():
+    while True:
+        download_schedule_text()
+        time.sleep(conf.get("schedule_download_interval", 60))
+        
+
+def download_weather():
+    while True:        
+        try:
+            url = 'https://www.weather.go.kr/w/observation/land/city-obs.do'
+            response = requests.get(url)
+            response.encoding = 'utf-8'
+            tree = html.fromstring(response.text)
+
+            sky_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[1]')[0].text
+            temp_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[5]')[0].text
+            rain_text = tree.xpath('/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[42]/td[8]')[0].text.replace('\xa0', '')
+
+            full_text = f"🌡 {temp_text}°C \n☁ {sky_text} \n☔ {rain_text}"
+            with open(os.path.join("var", "weather.txt"), "w", encoding="utf-8") as file:
+                file.write(full_text)
+            
+        except Exception as e:
+            print(e)
+        print("Weather update complete")
+        time.sleep(conf.get("weather_download_interval", 60))
+
+def get_weather_text():
+    try:        
+        with open(os.path.join("var", "weather.txt"), "r", encoding="utf-8") as file:
+            content = file.read()
+            return content
+    except Exception as e:
+        return "Weather get error"
+
+def get_schedule_text():
+    try:        
+        with open(os.path.join("var", "schedule.txt"), "r", encoding="utf-8") as file:
+            content = file.read()
+            return content
+    except Exception as e:
+        print(e)
+        return "Schedule get error"
+
 
 class DigitalClock(tk.Tk):
     def __init__(self):
@@ -171,35 +229,7 @@ class DigitalClock(tk.Tk):
         self.after(UPDATE_INTERVAL, self.update_schedule)
 
     def update_weather(self, event=None):
-        sky_code = ""
-        precip_code = ""
-        precip_code_dict = {
-            "0": "No Rain",
-            "1": "Rain",
-            "2": "Rain/Snow",
-            "3": "Snow",
-            "4": "Snow/Rain"
-        }
-
-        sky_code_dict = {
-            "DB01": "Clear",
-            "DB02": "Partly Cloudy",
-            "DB03": "Mostly Cloudy",
-            "DB04": "Overcast"
-        }
-        try:
-            url = f'https://apihub.kma.go.kr/api/typ01/url/kma_sfctm2.php?stn=108&help=1&authKey={conf.get("auth_key", "")}'
-            response = requests.get(url, verify=False)
-            current_temp = response.text.split("\n")[54].split()[11]
-            self.weather_label.config(text=f"🌡 {current_temp}°C \n☁ {sky_code} \n☔ {precip_code}")
-
-            url = f'https://apihub.kma.go.kr/api/typ01/url/fct_afs_dl.php?reg=11B10101&disp=0&help=1&authKey={conf.get("auth_key", "")}'
-            response = requests.get(url, verify=False)
-            sky_code = sky_code_dict[response.text.split("\n")[23].split()[14]]
-            precip_code = precip_code_dict[response.text.split("\n")[23].split()[15]]
-            self.weather_label.config(text=f"🌡 {current_temp}°C \n☁ {sky_code} \n☔ {precip_code}")
-        except Exception as e:
-            self.weather_label.config(text="Weather: N/A")
+        self.weather_label.config(text=get_weather_text())
         
         self.after(UPDATE_INTERVAL, self.update_weather)
 
@@ -255,5 +285,10 @@ class DigitalClock(tk.Tk):
 
 
 if __name__ == "__main__":
+    weather_thread = threading.Thread(target=download_weather)
+    weather_thread.start()
+
+    schedule_thread = threading.Thread(target=download_schedule_thread)
+    schedule_thread.start()
     app = DigitalClock()
     app.mainloop()
