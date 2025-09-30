@@ -171,6 +171,8 @@ class DigitalClock(tk.Tk):
         self.after(UPDATE_INTERVAL, self.update_schedule)
 
     def update_weather(self, event=None):
+        sky_code = ""
+        precip_code = ""
         precip_code_dict = {
             "0": "No Rain",
             "1": "Rain",
@@ -189,6 +191,7 @@ class DigitalClock(tk.Tk):
             url = f'https://apihub.kma.go.kr/api/typ01/url/kma_sfctm2.php?stn=108&help=1&authKey={conf.get("auth_key", "")}'
             response = requests.get(url, verify=False)
             current_temp = response.text.split("\n")[54].split()[11]
+            self.weather_label.config(text=f"🌡 {current_temp}°C \n☁ {sky_code} \n☔ {precip_code}")
 
             url = f'https://apihub.kma.go.kr/api/typ01/url/fct_afs_dl.php?reg=11B10101&disp=0&help=1&authKey={conf.get("auth_key", "")}'
             response = requests.get(url, verify=False)
