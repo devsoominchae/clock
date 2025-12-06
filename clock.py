@@ -6,11 +6,12 @@ import requests
 import threading
 
 from lxml import html
+from dotenv import load_dotenv
 from tkinter import ttk, colorchooser
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import pandas as pd
 import tkinter as tk
+import xml.etree.ElementTree as ET
 
 MINUTE = 60 * 1000
 SECOND = 1000
@@ -29,62 +30,22 @@ def get_conf():
 
 get_conf()
 
-def download_schedule_text():
-    try:
-        url = conf.get("google_sheet_url", "")
-        df = pd.read_csv(url, encoding='utf-8')
-        now = datetime.now()
-        current_hour = now.hour
-        current_weekday = now.strftime("%A")
-
-        # Get current schedule
-        try:
-            current_schedule = df.loc[df['time'] == f"{current_hour}:00", current_weekday].values[0]
-            if pd.isna(current_schedule):
-                current_schedule = "No schedule"
-        except:
-            current_schedule = "No schedule"
-
-        # Remaining schedule for today
-        today_df = df[['time', current_weekday]].copy()
-        remaining_schedule = today_df[today_df['time'].apply(lambda t: int(t.split(':')[0])) > current_hour]
-        remaining_schedule = remaining_schedule[remaining_schedule[current_weekday].notna()]
-        remaining_schedule = remaining_schedule[remaining_schedule[current_weekday].str.lower() != "sleep"]
-
-        remaining_text = ""
-        for _, row in remaining_schedule.iterrows():
-            remaining_text += f"{row['time'][:row['time'].index(':')]}시 {row[current_weekday]}\n"
-
-        # Get tomorrow's weekday name
-        tomorrow = now + timedelta(days=1)
-        tomorrow_weekday = tomorrow.strftime("%A")
-
-        # Schedule for tomorrow
-        tomorrow_df = df[['time', tomorrow_weekday]].copy()
-        tomorrow_schedule = tomorrow_df[tomorrow_df[tomorrow_weekday].notna()]
-        tomorrow_schedule = tomorrow_schedule[tomorrow_schedule[tomorrow_weekday].str.lower() != "sleep"]
-
-        tomorrow_text = ""
-        for _, row in tomorrow_schedule.iterrows():
-            tomorrow_text += f"{row['time'][:row['time'].index(':')]}시 {row[tomorrow_weekday]}\n"
-
-        # Combine all text
-        full_text = f"{current_schedule}\n\nToday:\n{remaining_text.strip()}\n\n{tomorrow_weekday}:\n{tomorrow_text.strip()}"
-
-        with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
-            file.write(full_text)
-    except Exception as e:
-        print(e)
-        with open(os.path.join("var", "schedule.txt"), "w", encoding="utf-8") as file:
-            file.write("Schedule download error")
-
-    print("Download schedule complete")
-
+def get_mimun_text():
+    mimun_text = "Not parsed yet"
+    load_dotenv()
+    mimun_api_key = os.getenv("MIMUN_API_KEY")
+    mimun_url = f"http://openAPI.seoul.go.kr:8088/{mimun_api_key}/xml/ListAirQualityByDistrictService/1/5/111262"
+    mimun_response = requests.get(mimun_url)
+    if mimun_response.status_code == 200:
+        root = ET.fromstring(mimun_response.text)
+        mimun_status = root.find('.//CAI_GRD').text
+        mimun_number = root.find('.//PM').text
+        mimun_text = f"{mimun_status}({mimun_number})"
+    else:
+        mimun_text = "Failed parsing"
     
-def download_schedule_thread():
-    while True:
-        download_schedule_text()
-        time.sleep(conf.get("schedule_download_interval", 60))
+    return mimun_text
+
         
 
 def download_weather():
@@ -97,19 +58,24 @@ def download_weather():
             i = 1
             try:
                 while True:
-                    if tree.xpath(f"/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/th/a")[0].text == "서울":
+                    if tree.xpath(f"/html/body/main/div[2]/div/div[3]/table/tbody/tr[{i}]/td[1]/a")[0].text == "서울":
                         break
                     i += 1
             except Exception as e:
                 print(e)
                 pass
             
-            area_text = tree.xpath(f"/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/th/a")[0].text
-            sky_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[1]')[0].text
-            temp_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[5]')[0].text
-            rain_text = tree.xpath(f'/html/body/div[2]/section/div/div[2]/div/div[3]/table/tbody/tr[{i}]/td[8]')[0].text.replace('\xa0', '')
+            area_text = tree.xpath(f"/html/body/main/div[2]/div/div[3]/table/tbody/tr[{i}]/td[1]/a")[0].text
+            sky_text = tree.xpath(f'/html/body/main/div[2]/div/div[3]/table/tbody/tr[{i}]/td[2]')[0].text
+            temp_text = tree.xpath(f'/html/body/main/div[2]/div/div[3]/table/tbody/tr[{i}]/td[6]')[0].text
+            rain_text = tree.xpath(f'/html/body/main/div[2]/div/div[3]/table/tbody/tr[{i}]/td[9]')[0].text
+            mimun_text = get_mimun_text()
 
-            full_text = f"{area_text}\n🌡 {temp_text}°C \n☁ {sky_text} \n☔ {rain_text}"
+            weather_last_updated = os.path.getmtime(os.path.join("var", "weather.txt"))
+            last_modified = datetime.fromtimestamp(weather_last_updated).strftime("%Y-%m-%d %H:%M")
+
+            full_text = f"{area_text}\n🌡 {temp_text}°C \n☁ {sky_text} \n☔ {rain_text} \n😷 {mimun_text} \n{last_modified}"
+            print(full_text)
             with open(os.path.join("var", "weather.txt"), "w", encoding="utf-8") as file:
                 file.write(full_text)
             
@@ -187,12 +153,6 @@ class DigitalClock(tk.Tk):
                                    fg="#ffffff", bg="#111")
         self.date_label.pack(anchor="center", pady=(0, 10))
 
-        self.schedule_label = tk.Label(self, font=(self.font_name, 14, "bold"),
-                                    fg="#ffffff", bg="#111", anchor="e", justify="right")
-        self.schedule_label.place(relx=.99, y=10, anchor="ne")
-        self.schedule_label.config(text=get_schedule_text())
-
-
         self.ctrl = tk.Frame(self, bg="#111")
         self.ctrl.pack(side="bottom", fill="x", pady=10)
 
@@ -234,14 +194,12 @@ class DigitalClock(tk.Tk):
         self.bind("<Control-z>", self.decrease_font)
         self.bind("<Control-x>", self.increase_font)
         self.bind("<Control-w>", self.update_weather)
-        self.bind("<Control-c>", self.update_schedule)
         self.bind("<Control-b>", self.update_bible)
         self.bind("<Escape>", lambda e: self.exit_fullscreen())  # ESC로 전체화면 해제
 
         self.update_clock()
         self.update_bible()
         self.update_weather()
-        self.update_schedule()
         self.toggle_fullscreen()
         self.toggle_menu()
 
@@ -261,11 +219,6 @@ class DigitalClock(tk.Tk):
         self.btn_fullscreen.config(text="Window Screen" if self.fullscreen else "Full Screen")
 
         self.after(200 if self.show_seconds else 800, self.update_clock)
-    
-    def update_schedule(self, event=None):
-        self.schedule_label.config(text=get_schedule_text())
-
-        self.after(UPDATE_INTERVAL, self.update_schedule)
 
     def update_weather(self, event=None):
         self.weather_label.config(text=get_weather_text())
@@ -287,8 +240,6 @@ class DigitalClock(tk.Tk):
 
         print("Loaded bible verse")
         self.after(60 * MINUTE, self.update_bible)
-
-
 
     def toggle_hour_format(self):
         self.is_24hour = not self.is_24hour
@@ -343,7 +294,5 @@ if __name__ == "__main__":
     weather_thread = threading.Thread(target=download_weather)
     weather_thread.start()
 
-    schedule_thread = threading.Thread(target=download_schedule_thread)
-    schedule_thread.start()
     app = DigitalClock()
     app.mainloop()
